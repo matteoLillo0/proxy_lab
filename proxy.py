@@ -5,6 +5,10 @@ import select
 HOST= "0.0.0.0"
 PORT= 8080
 
+ROSSO = '\033[91m'
+VERDE = '\033[92m'
+RESET = '\033[0m'
+
 BLOCKED_S = ["pataccaburdel.it"] # policy for blocked url
 
 def gestisci_client(client_socket, client_address):
@@ -29,11 +33,11 @@ def gestisci_client(client_socket, client_address):
             
         # actual block 
         if vietato:
-            print(f"[!] BLOCCO ATTIVATO per {client_address[1]} verso {url}")
+            print(f"{ROSSO}[!] BLOCCO ATTIVATO per {client_address[1]} verso {url}{RESET}")
             client_socket.close()
             return
         
-        print(f"[OK] Traffico consentito verso {url}")
+        print(f"{VERDE}[OK] Traffico consentito verso {url}{RESET}")
 
 
         port = 80
