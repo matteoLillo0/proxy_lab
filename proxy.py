@@ -18,8 +18,8 @@ def gestisci_client(client_socket, client_address):
             client_socket.close()
             return
 
-        prima_riga = richiesta.split(b'\n')[0].decode('utf-8', errors='ignore')
-        print(f"[{client_address[1]}] Richiesta: {prima_riga.strip()}")
+        prima_riga = richiesta.split(b'\n')[0].decode('utf-8', errors='ignore').strip()
+        print(f"[{client_address[1]}] Richiesta: {prima_riga}")
 
         metodo = prima_riga.split(' ')[0]
         url = prima_riga.split(' ')[1]
@@ -38,7 +38,6 @@ def gestisci_client(client_socket, client_address):
             return
         
         print(f"{VERDE}[OK] Traffico consentito verso {url}{RESET}")
-
 
         port = 80
         url_pulito = url
@@ -59,8 +58,36 @@ def gestisci_client(client_socket, client_address):
             if metodo == "CONNECT":
                 port = 443
 
+        richiesta_da_inoltrare = richiesta
+
+        # FORMATTAZIONE RICHIESTA HTTP
+
+        if metodo != "CONNECT":
+            # (origin-form)
+            path = "/"
+            if "://" in url:
+                url_senza_schema = url.split("://")[1]
+                if "/" in url_senza_schema:
+                    # Prende tutto dal primo slash in poi
+                    path = "/" + "/".join(url_senza_schema.split('/')[1:])
+            elif url.startswith("/"):
+                # Fallback nel caso il client invii già in origin-form
+                path = url
+            protocollo = prima_riga.split(' ')[2] if len(prima_riga.split(' ')) >= 3 else "HTTP/1.1"
+            nuova_prima_riga = f"{metodo} {path} {protocollo}"
+
+            # Sostituiamo la prima riga nei byte originali
+            # Gestiamo sia il CRLF (\r\n) standard che il semplice LF (\n)
+            if b'\r\n' in richiesta:
+                _, headers = richiesta.split(b'\r\n', 1)
+                richiesta_da_inoltrare = nuova_prima_riga.encode('utf-8') + b'\r\n' + headers
+            else:
+                _, headers = richiesta.split(b'\n', 1)
+                richiesta_da_inoltrare = nuova_prima_riga.encode('utf-8') + b'\n' + headers
+
         # forwarding logic
-        tunnel(host, port, metodo, richiesta, client_socket)
+
+        tunnel(host, port, metodo, richiesta_da_inoltrare, client_socket)
 
     except Exception as e:
         pass
@@ -102,7 +129,7 @@ def tunnel(host, port, metodo, richiesta_originale, client_socket):
         pass 
 
     finally: 
-        socket_esterno.close() 
+        socket_esterno.close()
 
 def start_proxy():
 
