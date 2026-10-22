@@ -1,52 +1,80 @@
-# 🛡️L7 Forward Proxy & Application Firewall
+# 🛡️ proxy_lab — L7 Forward Proxy con filtro sui domini
 
-Un Forward Proxy multithread e Next-Generation Firewall (NGFW) di Livello 7 scritto interamente in Python senza l'ausilio di framework esterni. 
+Forward proxy HTTP/HTTPS multithread scritto in Python usando esclusivamente la standard library (`socket`, `threading`, `select`), senza framework esterni.
 
-Questo progetto dimostra i fondamenti dell'ingegneria di rete, la manipolazione dei socket TCP a basso livello, il tunneling cieco per connessioni cifrate e il multiplexing dell'I/O.
+Il progetto nasce per studiare da vicino come funziona un proxy: gestione dei socket TCP a basso livello, parsing delle richieste HTTP, tunneling delle connessioni cifrate tramite il metodo `CONNECT` e multiplexing dell'I/O.
 
-## ✨ Funzionalità Principali
+## ✨ Funzionalità
 
-* **Ispezione a Livello 7 (HTTP):** Intercetta, decodifica e analizza gli header HTTP in chiaro per applicare policy di filtraggio (Blocklist) basate su stringhe e domini.
-* **Tunneling HTTPS (Metodo CONNECT):** Gestisce dinamicamente le richieste di connessione sicura instaurando un tunnel TCP cieco e bidirezionale tra il client e il server remoto.
-* **Multiplexing I/O Asincrono:** Utilizza la system call `select` per gestire il traffico Full-Duplex senza incappare in blocchi di I/O (I/O Blocking), garantendo una latenza minima.
-* **Architettura Multithread:** Genera thread demone indipendenti per ogni client connesso, permettendo la gestione concorrente di connessioni multiple sulla LAN.
+* **Parsing e filtraggio a livello 7 (HTTP):** il proxy legge la richiesta HTTP in chiaro, ne estrae host e porta di destinazione e applica una policy di filtraggio basata su una blocklist di domini e stringhe.
+* **Tunneling HTTPS (metodo `CONNECT`):** per le connessioni cifrate il proxy apre un tunnel TCP bidirezionale tra client e server remoto e si limita a inoltrare i byte, senza decifrare né ispezionare il contenuto. Il filtraggio sulle connessioni HTTPS avviene quindi solo sull'hostname indicato nella richiesta `CONNECT`.
+* **I/O multiplexing con `select`:** l'inoltro full-duplex tra client e server è gestito con la system call `select`, così un singolo thread può attendere dati su entrambi i socket senza restare bloccato su una sola direzione.
+* **Un thread per client:** ogni connessione in ingresso viene servita da un thread daemon dedicato, permettendo di gestire più client della LAN in parallelo.
+* **Log in tempo reale:** il terminale mostra le connessioni in ingresso e le azioni del filtro.
 
-## ⚙️ Architettura Tecnica
+## ⚙️ Come funziona
 
-Il sistema opera come un "Man in the Middle" autorizzato all'interno di una rete locale (LAN). 
-1. **Fase di Listening:** Il proxy esegue un bind sull'indirizzo `0.0.0.0`, mettendosi in ascolto di richieste provenienti da qualsiasi interfaccia di rete (es. porta `8080`).
-2. **Handshake e Parsing:** Al completamento del Three-Way Handshake TCP con un client, il payload viene letto e processato. L'URL viene ripulito da percorsi e protocolli per estrarre l'Hostname e la Porta target.
-3. **Firewall Policy:** L'Hostname viene confrontato con le regole della `BLOCKED_S` list. Se viene rilevata una violazione, il pacchetto subisce un drop istantaneo (chiusura del socket).
-4. **Forwarding & Pipe:** Se il traffico è legittimo, il proxy istanzia un socket client verso l'esterno. Per l'HTTP, inoltra gli header grezzi; per l'HTTPS, risponde al client con `200 Connection Established` e avvia il tunneling cifrato.
+```
+Client (browser) ──► proxy_lab :8080 ──► Server remoto
+                        │
+                        ├─ HTTP:  parsing header → controllo blocklist → inoltro richiesta
+                        └─ HTTPS: CONNECT host:443 → controllo blocklist → "200 Connection Established" → tunnel TCP
+```
 
-## 🚀 Installazione e Utilizzo
+1. **Listening:** il proxy esegue il bind su `0.0.0.0:8080` e accetta connessioni da qualsiasi interfaccia di rete.
+2. **Parsing:** dopo l'accettazione della connessione, il proxy legge la prima richiesta del client e, rimuovendo schema e percorso dall'URL, ricava hostname e porta di destinazione.
+3. **Filtraggio:** l'hostname viene confrontato con la lista `BLOCKED_S`. In caso di corrispondenza la richiesta viene rifiutata chiudendo la connessione con il client.
+4. **Inoltro:** se la richiesta è consentita, il proxy apre un socket verso il server di destinazione.
+   * Per **HTTP** inoltra la richiesta originale così com'è e restituisce la risposta al client.
+   * Per **HTTPS** risponde al client con `HTTP/1.1 200 Connection Established` e da quel momento inoltra in entrambe le direzioni il traffico TLS, che resta cifrato end-to-end tra browser e server.
+
+## 🚀 Installazione e utilizzo
 
 ### Prerequisiti
-* Python 3.x installato sul sistema.
-* Nessuna dipendenza esterna o libreria di terze parti richiesta (utilizza solo `socket`, `threading`, e `select` della standard library).
 
-### Avvio del Server Proxy
-1. Clonare la repository o scaricare il file `proxy.py`.
-2. Aprire un terminale e avviare lo script:
-   ```bash
-   python proxy.py
+* Python 3.x
+* Nessuna dipendenza esterna
 
-    Il terminale mostrerà il messaggio: [*] Proxy in ascolto su 0.0.0.0:8080. Il log in tempo reale registrerà le connessioni in entrata e le azioni del firewall.
+### Avvio
 
-Configurazione dei Client (LAN)
+```bash
+git clone https://github.com/matteoLillo0/proxy_lab.git
+cd proxy_lab
+python proxy.py
+```
 
-Per far transitare il traffico attraverso il proxy:
+All'avvio il terminale mostra:
 
-    Individuare l'indirizzo IPv4 della macchina host sulla rete locale (es. 192.168.1.X).
+```
+[*] Proxy in ascolto su 0.0.0.0:8080
+```
 
-    Aprire le impostazioni di rete del browser client (es. Firefox).
+### Configurazione dei client nella LAN
 
-    Selezionare Configurazione manuale dei proxy.
+1. Individua l'indirizzo IPv4 della macchina che esegue il proxy (ad esempio `192.168.1.X`).
+2. Sul client, apri le impostazioni di rete del browser (ad esempio in Firefox: *Impostazioni → Rete → Configurazione manuale dei proxy*).
+3. Inserisci l'IP della macchina host come proxy HTTP, imposta la porta `8080` e abilita l'uso dello stesso proxy anche per HTTPS.
 
-    Inserire l'indirizzo IP dell'host alla voce Proxy HTTP/HTTPS e impostare la porta su 8080.
+Per una prova rapida senza browser:
 
-⚠️ Disclaimer
+```bash
+curl -x http://192.168.1.X:8080 http://example.com
+curl -x http://192.168.1.X:8080 https://example.com
+```
 
-Questo progetto è stato sviluppato a scopo puramente didattico e accademico per lo studio delle architetture di rete e dei protocolli di trasporto.
+## 🚧 Limiti noti
 
-***
+Essendo un progetto di studio, alcune funzionalità tipiche di un proxy di produzione sono volutamente assenti:
+
+* nessuna ispezione del contenuto HTTPS (niente TLS interception), quindi il filtro HTTPS agisce solo sul nome host;
+* blocklist definita nel codice anziché in un file di configurazione;
+* nessun supporto a keep-alive HTTP, caching o autenticazione dei client;
+* modello un-thread-per-connessione, semplice da leggere ma non adatto a carichi elevati.
+
+## ⚠️ Disclaimer
+
+Progetto sviluppato a scopo esclusivamente didattico, per lo studio delle architetture di rete e dei protocolli di trasporto. Da usare solo su reti e dispositivi di cui si ha il controllo o l'autorizzazione.
+
+## 📄 Licenza
+
+Distribuito con licenza MIT. Vedi il file `LICENSE`.
